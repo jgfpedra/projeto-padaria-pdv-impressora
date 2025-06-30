@@ -7,6 +7,29 @@ PORT = 9100  # Porta local
 
 CUT_CMD = b'\x1D\x56'  # Comando de corte ESC/POS
 
+def valida_sequencia(parts):
+    texto_partes = [part.decode(errors='ignore') for part in parts]
+
+    # Palavras-chave para identificar cada parte
+    chave_nf = "DOCUMENTO AUXILIAR DA NOTA FISCAL"
+    chave_tef = "COMPROVANTE CREDITO OU DEBITO"
+    chave_via = "VIA ESTABELECIMENTO"
+
+    # Procura os índices dessas partes no texto das partes
+    try:
+        idx_nf = next(i for i, texto in enumerate(texto_partes) if chave_nf in texto)
+        idx_tef = next(i for i, texto in enumerate(texto_partes) if chave_tef in texto)
+        idx_via = next(i for i, texto in enumerate(texto_partes) if chave_via in texto)
+    except StopIteration:
+        # Se alguma parte não foi encontrada, retorna False
+        return False
+
+    # Verifica se a ordem é correta
+    if idx_nf < idx_tef < idx_via:
+        return True
+    else:
+        return False
+
 def ask_receipt():
     result = None
 
@@ -22,17 +45,33 @@ def ask_receipt():
 
     win = tk.Tk()
     win.title("Cupom Fiscal")
-    win.geometry("280x120")
+
+    # Remove barra de título (sem close/min/max buttons)
+    win.overrideredirect(True)
+
+    # Define tamanho e posição centralizada
+    width, height = 300, 150
+    screen_width = win.winfo_screenwidth()
+    screen_height = win.winfo_screenheight()
+    x = (screen_width - width) // 2
+    y = (screen_height - height) // 2
+    win.geometry(f"{width}x{height}+{x}+{y}")
+
+    # Mantém sempre no topo
     win.attributes("-topmost", True)
 
-    tk.Label(win, text="Cliente deseja o cupom?", font=("Arial", 12)).pack(pady=10)
+    # Garante foco na janela
+    win.focus_force()
+
+    tk.Label(win, text="Cliente deseja o cupom?", font=("Arial", 14)).pack(pady=20)
 
     btns = tk.Frame(win)
     btns.pack()
-    tk.Button(btns, text="Sim", width=10, command=yes).grid(row=0, column=0, padx=10)
-    tk.Button(btns, text="Não", width=10, command=no).grid(row=0, column=1, padx=10)
 
-    # Hotkeys
+    tk.Button(btns, text="Sim (F12)", width=12, command=yes).grid(row=0, column=0, padx=10)
+    tk.Button(btns, text="Não (F11)", width=12, command=no).grid(row=0, column=1, padx=10)
+
+    # Hotkeys para teclado físico
     win.bind('<F12>', yes)  # F12 para "Sim"
     win.bind('<F11>', no)   # F11 para "Não"
 
@@ -65,7 +104,7 @@ def identify_parts(parts):
 
     return result
 
-def print_to_real_printer(data, printer_name=r"\\MYPC\epson"):
+def print_to_real_printer(data, printer_name=r"Epson"):
     hPrinter = win32print.OpenPrinter(printer_name)
     try:
         hJob = win32print.StartDocPrinter(hPrinter, 1, ("Cupom", None, "RAW"))
@@ -81,10 +120,12 @@ def main():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("0.0.0.0", PORT))
         s.listen(1)
+
         while True:
             conn, addr = s.accept()
             print(f"Recebendo job de {addr}")
             data = b''
+
             while True:
                 chunk = conn.recv(1024)
                 if not chunk:
@@ -93,14 +134,18 @@ def main():
             conn.close()
 
             parts = split_receipts(data)
-            identified = identify_parts(parts)
 
+            # Valida sequência das partes
+            if not valida_sequencia(parts):
+                print("[ERRO] Sequência inválida das partes. Impressão abortada.")
+                continue  # Ignora esse job e volta para esperar o próximo
+
+            identified = identify_parts(parts)
             wants = ask_receipt()
 
-            to_print = []
             if wants:
                 print("Cliente deseja o cupom completo.")
-                to_print = parts  # Imprime tudo
+                to_print = parts
             else:
                 print("Cliente recusou. Imprimindo somente VIA ESTABELECIMENTO.")
                 to_print = identified["via_estab"]
