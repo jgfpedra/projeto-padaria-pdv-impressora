@@ -4,7 +4,8 @@ from datetime import datetime
 PORT = 9100  # Porta onde o middleware vai escutar
 
 def save_dump(data):
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    now = datetime.now()
+    timestamp = now.strftime("%Y%m%d_%H%M%S_%f")[:-3]  # até milissegundos
     filename = f"dump_{timestamp}.bin"
     with open(filename, "wb") as f:
         f.write(data)
