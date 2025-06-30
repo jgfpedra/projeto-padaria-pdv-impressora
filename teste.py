@@ -5,13 +5,20 @@ from datetime import datetime
 
 PORT = 9100  # Altere se necessário
 
-def save_dump(data):
-    os.makedirs("dump", exist_ok=True)
+def save_dump(data, directory="dumps"):
+    # Pega o diretório atual onde o script está sendo executado
+    directory = os.path.join(os.getcwd(), directory)
+    
+    # Cria o diretório, se não existir
+    os.makedirs(directory, exist_ok=True)
+
     now = datetime.now()
     timestamp = now.strftime("%Y%m%d_%H%M%S_%f")[:-3]
-    filename = os.path.join("dump", f"dump_{timestamp}.bin")
+    filename = os.path.join(directory, f"dump_{timestamp}.bin")
+    
     with open(filename, "wb") as f:
         f.write(data)
+    
     print(f"Dump salvo em {filename}")
     return filename
 
@@ -25,16 +32,28 @@ def send_to_printer(data):
         print(f"Erro ao enviar para a impressora: {e}")
 
 def handle_connection(conn, addr):
-    print(f"Recebendo job de {addr}")
-    data = b''
-    while True:
-        chunk = conn.recv(1024)
-        if not chunk:
-            break
-        data += chunk
-    conn.close()
-    save_dump(data)
-    send_to_printer(data)
+    try:
+        print(f"Recebendo job de {addr}")
+        data = b''
+        conn.settimeout(5)
+        while True:
+            chunk = conn.recv(1024)
+            if not chunk:
+                break
+            data += chunk
+    except Exception as e:
+        print(f"Erro durante a conexão com {addr}: {e}")
+    finally:
+        conn.close()
+        if data:
+            try:
+                save_dump(data)
+            except Exception as e:
+                print(f"Erro ao salvar dump: {e}")
+            try:
+                send_to_printer(data)
+            except Exception as e:
+                print(f"Erro ao enviar para a impressora: {e}")
 
 def main():
     print(f"Middleware escutando na porta {PORT}...")
