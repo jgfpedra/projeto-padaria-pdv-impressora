@@ -1,20 +1,23 @@
 import os
 import socket
 import threading
+import serial
+import time
 from datetime import datetime
 
 PORT = 9100  # Altere se necessário
+printer_lock = threading.Lock()
 
 def save_dump(data, directory="dumps"):
-    # Pega o diretório atual onde o script está sendo executado
-    directory = os.path.join(os.getcwd(), directory)
+    # Salva o dump na mesma pasta onde o script está
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    full_path = os.path.join(base_dir, directory)
     
-    # Cria o diretório, se não existir
-    os.makedirs(directory, exist_ok=True)
+    os.makedirs(full_path, exist_ok=True)
 
     now = datetime.now()
     timestamp = now.strftime("%Y%m%d_%H%M%S_%f")[:-3]
-    filename = os.path.join(directory, f"dump_{timestamp}.bin")
+    filename = os.path.join(full_path, f"dump_{timestamp}.bin")
     
     with open(filename, "wb") as f:
         f.write(data)
@@ -22,14 +25,26 @@ def save_dump(data, directory="dumps"):
     print(f"Dump salvo em {filename}")
     return filename
 
-def send_to_printer(data):
-    printer_path = r"\\127.0.0.1\Epson"
-    try:
-        with open(printer_path, "wb") as printer:
-            printer.write(data)
-        print(f"Dados enviados para a impressora em {printer_path}")
-    except Exception as e:
-        print(f"Erro ao enviar para a impressora: {e}")
+def send_to_printer(data, printer_type="bematech"):
+    if printer_type == "epson":
+        printer_path = r"\\127.0.0.1\Epson"
+        try:
+            with open(printer_path, "wb") as printer:
+                printer.write(data)
+            print(f"Dados enviados para a impressora Epson em {printer_path}")
+        except Exception as e:
+            print(f"Erro ao enviar para a impressora Epson: {e}")
+
+    elif printer_type == "bematech":
+    	try:
+        	with printer_lock:
+            		with serial.Serial(port="COM3", baudrate=9600, timeout=1) as ser:
+                		ser.write(data)
+                		ser.flush()         # <- força envio imediato do buffer
+                		time.sleep(0.5)     # <- dá tempo pra impressora processar
+        	print("Dados enviados para a Bematech MP-4200 em COM3")
+    	except Exception as e:
+        	print(f"Erro ao enviar para a Bematech: {e}")
 
 def handle_connection(conn, addr):
     try:

@@ -1,34 +1,62 @@
-import os
 import socket
 import win32print
 import tkinter as tk
+import serial
+import time
 
-PORT = 9100  # Porta local
+PORT = 9100
+CUT_CMD = b'\x1D\x56'  # comando de corte
 
-CUT_CMD = b'\x1D\x56'  # Comando de corte ESC/POS
+# Escolha da impressora: "bematech" ou "epson"
+IMPRESSORA_ATUAL = "bematech"  # altere aqui para "epson" se quiser
+# Comandos ESC/POS básicos para Bematech
+
+# Fonte normal (tamanho padrão)
+FONT_NORMAL = b'\x1D\x21\x00'  
+
+# Espaçamento entre linhas (exemplo: 30 pontos)
+LINE_SPACING = b'\x1B\x33\x1E'  
+
+# Espaçamento entre caracteres (exemplo: 2 pontos)
+CHAR_SPACING = b'\x1B\x20\x02'  
+
+def ajustar_fonte_espaco(data: bytes) -> bytes:
+    # Comandos ESC/POS para Bematech:
+    
+    # ESC ! n  --> Define modo da fonte
+    # n = 0x01 (fonte menor, modo normal)
+    cmd_modo_fonte_pequena = b'\x1B\x21\x11' 
+    
+    # ESC SP n --> Define espaço entre caracteres
+    # n = 0 (menor espaçamento)
+    cmd_espaco_entre_chars = b'\x1B\x20\x00' 
+    
+    # ESC 3 n --> Define espaçamento entre linhas (altura da linha)
+    # n = 15 (ajuste pequeno, padrão é 30)
+    cmd_espaco_entre_linhas = b'\x1B\x33\x0F'
+    
+    # Monta os comandos no início do dado
+    return cmd_modo_fonte_pequena + cmd_espaco_entre_chars + cmd_espaco_entre_linhas + data
+
+
+def split_receipts(data):
+    parts = data.split(CUT_CMD)
+    return [part + CUT_CMD for part in parts if part.strip()]
 
 def valida_sequencia(parts):
     texto_partes = [part.decode(errors='ignore') for part in parts]
-
-    # Palavras-chave para identificar cada parte
     chave_nf = "DOCUMENTO AUXILIAR DA NOTA FISCAL"
     chave_tef = "COMPROVANTE CREDITO OU DEBITO"
     chave_via = "VIA ESTABELECIMENTO"
 
-    # Procura os índices dessas partes no texto das partes
     try:
         idx_nf = next(i for i, texto in enumerate(texto_partes) if chave_nf in texto)
         idx_tef = next(i for i, texto in enumerate(texto_partes) if chave_tef in texto)
         idx_via = next(i for i, texto in enumerate(texto_partes) if chave_via in texto)
     except StopIteration:
-        # Se alguma parte não foi encontrada, retorna False
         return False
 
-    # Verifica se a ordem é correta
-    if idx_nf < idx_tef < idx_via:
-        return True
-    else:
-        return False
+    return idx_nf < idx_tef < idx_via
 
 def ask_receipt():
     result = None
@@ -45,78 +73,58 @@ def ask_receipt():
 
     win = tk.Tk()
     win.title("Cupom Fiscal")
-
-    # Remove barra de título (sem close/min/max buttons)
     win.overrideredirect(True)
-
-    # Define tamanho e posição centralizada
     width, height = 300, 150
     screen_width = win.winfo_screenwidth()
     screen_height = win.winfo_screenheight()
     x = (screen_width - width) // 2
     y = (screen_height - height) // 2
     win.geometry(f"{width}x{height}+{x}+{y}")
-
-    # Mantém sempre no topo
     win.attributes("-topmost", True)
-
-    # Garante foco na janela
     win.focus_force()
 
     tk.Label(win, text="Cliente deseja o cupom?", font=("Arial", 14)).pack(pady=20)
 
     btns = tk.Frame(win)
     btns.pack()
-
     tk.Button(btns, text="Sim (F12)", width=12, command=yes).grid(row=0, column=0, padx=10)
     tk.Button(btns, text="Não (F11)", width=12, command=no).grid(row=0, column=1, padx=10)
 
-    # Hotkeys para teclado físico
-    win.bind('<F12>', yes)  # F12 para "Sim"
-    win.bind('<F11>', no)   # F11 para "Não"
+    win.bind('<F12>', yes)
+    win.bind('<F11>', no)
 
     win.mainloop()
     return result
 
-def split_receipts(data):
-    parts = data.split(CUT_CMD)
-    return [part + CUT_CMD for part in parts if part.strip()]
-
-def identify_parts(parts):
-    result = {
-        "nfe": [],
-        "tef": [],
-        "via_estab": [],
-        "outros": []
-    }
-
-    for part in parts:
-        text = part.decode('latin1', errors='ignore')
-
-        if "DOCUMENTO AUXILIAR DA NOTA FISCAL" in text:
-            result["nfe"].append(part)
-        elif "COMPROVANTE CREDITO OU DEBITO" in text:
-            result["tef"].append(part)
-        elif "VIA ESTABELECIMENTO" in text:
-            result["via_estab"].append(part)
-        else:
-            result["outros"].append(part)
-
-    return result
-
-def print_to_real_printer(data, printer_name=r"Epson"):
-    hPrinter = win32print.OpenPrinter(printer_name)
+def print_to_epson(data, printer_name=r"Epson"):
     try:
-        hJob = win32print.StartDocPrinter(hPrinter, 1, ("Cupom", None, "RAW"))
-        win32print.StartPagePrinter(hPrinter)
-        win32print.WritePrinter(hPrinter, data)
-        win32print.EndPagePrinter(hPrinter)
-        win32print.EndDocPrinter(hPrinter)
-    finally:
-        win32print.ClosePrinter(hPrinter)
+        hPrinter = win32print.OpenPrinter(printer_name)
+        try:
+            win32print.StartDocPrinter(hPrinter, 1, ("Cupom", None, "RAW"))
+            win32print.StartPagePrinter(hPrinter)
+            win32print.WritePrinter(hPrinter, data)
+            win32print.EndPagePrinter(hPrinter)
+            win32print.EndDocPrinter(hPrinter)
+        finally:
+            win32print.ClosePrinter(hPrinter)
+        print(f"Impressão enviada para: {printer_name}")
+    except Exception as e:
+        print(f"[ERRO] Impressão Epson falhou: {e}")
+
+def print_to_bematech(data, com_port="COM3"):
+    import serial
+    try:
+        with serial.Serial(port=com_port, baudrate=9600, timeout=1) as ser:
+            ser.write(data)
+            ser.flush()
+            time.sleep(0.5)
+        print("Impressão enviada para Bematech via COM3")
+    except Exception as e:
+        print(f"[ERRO] Impressão Bematech falhou: {e}")
 
 def main():
     print(f"Middleware escutando na porta {PORT}...")
+
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("0.0.0.0", PORT))
         s.listen(1)
@@ -125,7 +133,6 @@ def main():
             conn, addr = s.accept()
             print(f"Recebendo job de {addr}")
             data = b''
-
             while True:
                 chunk = conn.recv(1024)
                 if not chunk:
@@ -135,26 +142,21 @@ def main():
 
             parts = split_receipts(data)
 
-            # Valida sequência das partes
-            if not valida_sequencia(parts):
-                print("[ERRO] Sequência inválida das partes. Impressão abortada.")
-                continue  # Ignora esse job e volta para esperar o próximo
-
-            identified = identify_parts(parts)
-            wants = ask_receipt()
-
-            if wants:
-                print("Cliente deseja o cupom completo.")
-                to_print = parts
+            if valida_sequencia(parts):
+                wants = ask_receipt()
+                if not wants:
+                    print("Cliente recusou o cupom. Impressão abortada.")
+                    continue
             else:
-                print("Cliente recusou. Imprimindo somente VIA ESTABELECIMENTO.")
-                to_print = identified["via_estab"]
+                print("[AVISO] Sequência inválida das partes. Imprimindo sem confirmação.")
 
-            if to_print:
-                final_data = b''.join(to_print)
-                print_to_real_printer(final_data)
+            final_data = b''.join(parts)
+
+            if IMPRESSORA_ATUAL == "bematech":
+                final_data = ajustar_fonte_espaco(final_data)  # Aplica comandos ESC/POS
+                print_to_bematech(final_data)
             else:
-                print("Nenhuma parte selecionada para impressão.")
+                print_to_epson(final_data)
 
 if __name__ == "__main__":
     main()
