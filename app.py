@@ -5,39 +5,17 @@ import serial
 import time
 
 PORT = 9100
-CUT_CMD = b'\x1D\x56'  # comando de corte
-
-# Escolha da impressora: "bematech" ou "epson"
-IMPRESSORA_ATUAL = "bematech"  # altere aqui para "epson" se quiser
-# Comandos ESC/POS básicos para Bematech
-
-# Fonte normal (tamanho padrão)
-FONT_NORMAL = b'\x1D\x21\x00'  
-
-# Espaçamento entre linhas (exemplo: 30 pontos)
-LINE_SPACING = b'\x1B\x33\x1E'  
-
-# Espaçamento entre caracteres (exemplo: 2 pontos)
-CHAR_SPACING = b'\x1B\x20\x02'  
+CUT_CMD = b'\x1D\x56'
+IMPRESSORA_ATUAL = "epson"
+FONT_NORMAL = b'\x1D\x21\x00'
+LINE_SPACING = b'\x1B\x33\x1E'
+CHAR_SPACING = b'\x1B\x20\x02'
 
 def ajustar_fonte_espaco(data: bytes) -> bytes:
-    # Comandos ESC/POS para Bematech:
-    
-    # ESC ! n  --> Define modo da fonte
-    # n = 0x01 (fonte menor, modo normal)
     cmd_modo_fonte_pequena = b'\x1B\x21\x11' 
-    
-    # ESC SP n --> Define espaço entre caracteres
-    # n = 0 (menor espaçamento)
     cmd_espaco_entre_chars = b'\x1B\x20\x00' 
-    
-    # ESC 3 n --> Define espaçamento entre linhas (altura da linha)
-    # n = 15 (ajuste pequeno, padrão é 30)
     cmd_espaco_entre_linhas = b'\x1B\x33\x0F'
-    
-    # Monta os comandos no início do dado
     return cmd_modo_fonte_pequena + cmd_espaco_entre_chars + cmd_espaco_entre_linhas + data
-
 
 def split_receipts(data):
     parts = data.split(CUT_CMD)
@@ -48,29 +26,29 @@ def valida_sequencia(parts):
     chave_nf = "DOCUMENTO AUXILIAR DA NOTA FISCAL"
     chave_tef = "COMPROVANTE CREDITO OU DEBITO"
     chave_via = "VIA ESTABELECIMENTO"
-
-    try:
-        idx_nf = next(i for i, texto in enumerate(texto_partes) if chave_nf in texto)
-        idx_tef = next(i for i, texto in enumerate(texto_partes) if chave_tef in texto)
-        idx_via = next(i for i, texto in enumerate(texto_partes) if chave_via in texto)
-    except StopIteration:
+    indices_nf = [i for i, texto in enumerate(texto_partes) if chave_nf in texto]
+    indices_tef = [i for i, texto in enumerate(texto_partes) if chave_tef in texto]
+    indices_via = [i for i, texto in enumerate(texto_partes) if chave_via in texto]
+    if not indices_nf or not indices_tef or not indices_via:
         return False
-
-    return idx_nf < idx_tef < idx_via
+    for i in indices_nf:
+        tef_candidates = [j for j in indices_tef if j > i]
+        for j in tef_candidates:
+            via_candidates = [k for k in indices_via if k > j]
+            if via_candidates:
+                return True
+    return False
 
 def ask_receipt():
     result = None
-
     def yes(event=None):
         nonlocal result
         result = True
         win.destroy()
-
     def no(event=None):
         nonlocal result
         result = False
         win.destroy()
-
     win = tk.Tk()
     win.title("Cupom Fiscal")
     win.overrideredirect(True)
@@ -82,17 +60,13 @@ def ask_receipt():
     win.geometry(f"{width}x{height}+{x}+{y}")
     win.attributes("-topmost", True)
     win.focus_force()
-
     tk.Label(win, text="Cliente deseja o cupom?", font=("Arial", 14)).pack(pady=20)
-
     btns = tk.Frame(win)
     btns.pack()
     tk.Button(btns, text="Sim (F12)", width=12, command=yes).grid(row=0, column=0, padx=10)
     tk.Button(btns, text="Não (F11)", width=12, command=no).grid(row=0, column=1, padx=10)
-
     win.bind('<F12>', yes)
     win.bind('<F11>', no)
-
     win.mainloop()
     return result
 
