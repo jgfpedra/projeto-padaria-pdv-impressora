@@ -5,6 +5,7 @@ import re
 from collections import deque
 from typing import Deque, Union, Sequence, Optional
 import platform
+import unicodedata
 
 PORT = 9100
 IMPRESSORA_ATUAL: str = "epson"  # "epson" ou "bematech"
@@ -31,18 +32,24 @@ valid_jobs: Deque[bytes] = deque(maxlen=3)
 def limpar_caracteres_de_controle(data: bytes) -> str:
     return re.sub(r'[\x00-\x1F\x7F\x1b]', '', data.decode('utf-8', errors='ignore'))
 
+def normalizar_texto(texto: str) -> str:
+    # Remove acentos, deixa tudo minúsculo e remove espaços duplicados
+    texto = ''.join(c for c in unicodedata.normalize('NFD', texto) if unicodedata.category(c) != 'Mn')
+    return ' '.join(texto.lower().split())
+
 def valida_sequencia_bruta(data: bytes) -> bool:
     data_limpa = limpar_caracteres_de_controle(data)
-    data_normalizada = " ".join(data_limpa.split())
+    data_normalizada = normalizar_texto(data_limpa)
+    print(f"[DEBUG] Conteúdo acumulado para validação:\n{data_limpa}\n--- FIM DO BLOCO ---")
     for partes_necessarias in PARTES_POSSIVEIS:
         partes_ok = True
         for parte in partes_necessarias:
             if isinstance(parte, list):
-                if not any(alt in data_normalizada for alt in parte):
+                if not any(normalizar_texto(alt) in data_normalizada for alt in parte):
                     partes_ok = False
                     break
             else:
-                if parte not in data_normalizada:
+                if normalizar_texto(parte) not in data_normalizada:
                     partes_ok = False
                     break
         if partes_ok:
@@ -151,7 +158,27 @@ def main():
                 if not data.strip():
                     print("[AVISO] Job recebido estava vazio. Ignorando.")
                     continue
-                dados_acumulados += data
+                # Detecta início do cupom
+                data_limpa = limpar_caracteres_de_controle(data)
+                padrao_inicio = normalizar_texto(PARTES_CF_SIMPLIFICADO[0])
+                data_limpa_normalizada = normalizar_texto(data_limpa)
+                idx_inicio = data_limpa_normalizada.find(padrao_inicio)
+                if idx_inicio != -1:
+                    # Começa a acumular a partir do padrão
+                    print('[DEBUG] Início de cupom detectado neste job. Acumulando a partir daqui.')
+                    # Busca o byte offset correspondente ao início do padrão
+                    byte_offset = 0
+                    for i in range(len(data_limpa)):
+                        if normalizar_texto(data_limpa[:i]) == data_limpa_normalizada[:idx_inicio]:
+                            byte_offset = i
+                            break
+                    dados_acumulados = data[byte_offset:]
+                elif dados_acumulados:
+                    # Já está acumulando, segue acumulando
+                    dados_acumulados += data
+                else:
+                    print('[DEBUG] Ignorando dados pois ainda não foi detectado início de cupom.')
+                    continue
                 print(f"[DEBUG] Job recebido (primeiros 200 bytes): {data[:200]}...")
                 if valida_sequencia_bruta(dados_acumulados):
                     valid_jobs.append(dados_acumulados)
@@ -166,14 +193,10 @@ def main():
                         else:
                             print("Cliente recusou o cupom. Impressão abortada.")
                         valid_jobs.clear()
-                    dados_acumulados = b''
+                    dados_acumulados = b''  # Limpa só quando cupom válido
                 else:
-                    print("[AVISO] Sequência inválida das partes. Imprimindo sem confirmação.")
-                    if IMPRESSORA_ATUAL == "bematech":
-                        print_to_bematech(dados_acumulados)
-                    else:
-                        print_to_epson(dados_acumulados)
-                    dados_acumulados = b''
+                    print("[AVISO] Sequência inválida das partes. Aguardando mais dados...")
+                    # Não limpa dados_acumulados aqui! Continua acumulando até formar um cupom completo
             except Exception as e:
                 print(f"[ERRO] Falha na conexão ou processamento: {e}")
                 continue
